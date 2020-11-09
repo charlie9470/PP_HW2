@@ -5,7 +5,8 @@
 #define PNG_NO_SETJMP
 #define R_M 1 //row-major
 #define C_M 2 //column-major
-#define DEBUG_MODE 0
+#define DEBUG_MODE 1
+#define CORES_PER_CPU 1
 
 #include <sched.h>
 #include <pthread.h>
@@ -30,6 +31,7 @@ typedef struct thread_Info{
 
 int mode;
 int num_cpu;
+int SIZE;
 int iters;
 double left;
 double right;
@@ -79,8 +81,8 @@ void write_png(const char* filename, int iters, int width, int height, const int
 void* Thread_mandelbrot(void* arg){
 	T_I* data = (T_I*) arg;
 	int id = data->id;
-/*	if(DEBUG_MODE) printf("Thread id: %d\n",id);
 	if(DEBUG_MODE) printf("Thread %d ran by CPU %d\n", id, sched_getcpu());
+/*	if(DEBUG_MODE) printf("Thread id: %d\n",id);
 	if(DEBUG_MODE){
 		for(int i=0;i<1000;){
 			i++;//DO NOTHING
@@ -88,11 +90,14 @@ void* Thread_mandelbrot(void* arg){
 	}
 	if(DEBUG_MODE) printf("Mode: %d\n",mode);
 */
-	if(mode == R_M){
-		for (int j = id; j < height; j+=num_cpu) {
+	unsigned long long Load_count;
+	unsigned long long pixel_count;
+//	if(mode == R_M){
+		for (int j = id; j < height; j+=SIZE) {
 			double y0 = j * ((upper - lower) / height) + lower;
 			for (int i = 0; i < width; ++i) {
 				double x0 = i * ((right - left) / width) + left;
+				pixel_count++;
 
 				int repeats = 0;
 				double x = 0;
@@ -104,16 +109,18 @@ void* Thread_mandelbrot(void* arg){
 					x = temp;
 					length_squared = x * x + y * y;
 					++repeats;
+					++Load_count;
 				}
 				image[j * width + i] = repeats;
 			}
 		}
-	}
-	else{
+//	}
+/*	else{
 		for (int i = id; i < width; i+=num_cpu) {
 			double x0 = i * ((right - left) / width) + left;
 			for (int j = 0; j < height; ++j) {
 				double y0 = j * ((upper - lower) / height) + lower;
+				pixel_count++;
 
 				int repeats = 0;
 				double x = 0;
@@ -125,21 +132,26 @@ void* Thread_mandelbrot(void* arg){
 					x = temp;
 					length_squared = x * x + y * y;
 					++repeats;
+					++Load_count;
 				}
 				image[j * width + i] = repeats;
 			}
 		}
 	}
-
+*/	if(DEBUG_MODE) printf("%llu work load in thread %d\n", Load_count, id);
+//	if(DEBUG_MODE) printf("%llu pixels in cpu %d\n", pixel_count, id);
 	pthread_exit(NULL);
 }
 
 void master_mandelbrot(){
-	if(mode == R_M){
-		for (int j = 0; j < height; j+=num_cpu) {
+	unsigned long long master_Load_count = 0;
+	unsigned long long master_pixel_count = 0;
+//	if(mode == R_M){
+		for (int j = 0; j < height; j+=SIZE) {
 			double y0 = j * ((upper - lower) / height) + lower;
 			for (int i = 0; i < width; ++i) {
 				double x0 = i * ((right - left) / width) + left;
+				master_pixel_count++;
 
 				int repeats = 0;
 				double x = 0;
@@ -151,16 +163,18 @@ void master_mandelbrot(){
 					x = temp;
 					length_squared = x * x + y * y;
 					++repeats;
+					++master_Load_count;
 				}
 				image[j * width + i] = repeats;
 			}
 		}
-	}
-	else{
+//	}
+/*	else{
 		for (int i = 0; i < width; i+=num_cpu) {
 			double x0 = i * ((right - left) / width) + left;
 			for (int j = 0; j < height; ++j) {
 				double y0 = j * ((upper - lower) / height) + lower;
+				master_pixel_count++;
 
 				int repeats = 0;
 				double x = 0;
@@ -172,12 +186,14 @@ void master_mandelbrot(){
 					x = temp;
 					length_squared = x * x + y * y;
 					++repeats;
+					++master_Load_count;
 				}
 				image[j * width + i] = repeats;
 			}
 		}
-
 	}
+*/	if(DEBUG_MODE) printf("%llu work load in master\n", master_Load_count);
+//	if(DEBUG_MODE) printf("%llu pixels in master\n", master_pixel_count);
 }
 
 int main(int argc, char** argv) {
@@ -230,16 +246,17 @@ int main(int argc, char** argv) {
 	*/
 		
 	/* pthread mandelbrot set*/
-	T_I DATA[num_cpu-1];
-	pthread_t threads[num_cpu - 1];
-	for(int i = 0;i<num_cpu-1;i++){
-		DATA[i].id = i+1;
+	SIZE = (CORES_PER_CPU)*num_cpu;
+	T_I DATA[SIZE];
+	pthread_t threads[SIZE];
+	for(int i = 0;i<SIZE;i++){
+		DATA[i].id = i;
 		pthread_create(&threads[i], NULL, Thread_mandelbrot, (void*) &DATA[i]);
 	}
 
-	master_mandelbrot();
+//	master_mandelbrot();
 
-	for(int i =0;i<num_cpu-1;i++){
+	for(int i =0;i<SIZE;i++){
 		pthread_join(threads[i], NULL);
 	}
 
