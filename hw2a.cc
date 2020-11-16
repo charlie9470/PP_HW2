@@ -6,6 +6,8 @@
 #define R_M 1 //row-major
 #define C_M 2 //column-major
 #define DEBUG_MODE 1
+#define SHOW_LOAD 1
+#define IS_TIMING 1
 #define CORES_PER_CPU 1
 
 #include <sched.h>
@@ -15,6 +17,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <iostream>
+#include <iomanip>
 
 /* Pthread version1
  * tries to distribute pixels in min(row,col)-major
@@ -40,6 +45,9 @@ double upper;
 int width;
 int height;
 int* image;
+unsigned long long* Load_count;
+struct timespec begin,end;
+double elapsed;
 
 void write_png(const char* filename, int iters, int width, int height, const int* buffer) {
 	FILE* fp = fopen(filename, "wb");
@@ -81,7 +89,7 @@ void write_png(const char* filename, int iters, int width, int height, const int
 void* Thread_mandelbrot(void* arg){
 	T_I* data = (T_I*) arg;
 	int id = data->id;
-	if(DEBUG_MODE) printf("Thread %d ran by CPU %d\n", id, sched_getcpu());
+	if(DEBUG_MODE) std::cout << "Thread " << id << "ran by CPU " << sched_getcpu() << std::endl;
 /*	if(DEBUG_MODE) printf("Thread id: %d\n",id);
 	if(DEBUG_MODE){
 		for(int i=0;i<1000;){
@@ -90,7 +98,6 @@ void* Thread_mandelbrot(void* arg){
 	}
 	if(DEBUG_MODE) printf("Mode: %d\n",mode);
 */
-	unsigned long long Load_count;
 	unsigned long long pixel_count;
 //	if(mode == R_M){
 		for (int j = id; j < height; j+=SIZE) {
@@ -109,7 +116,7 @@ void* Thread_mandelbrot(void* arg){
 					x = temp;
 					length_squared = x * x + y * y;
 					++repeats;
-					++Load_count;
+					++Load_count[id];
 				}
 				image[j * width + i] = repeats;
 			}
@@ -138,13 +145,13 @@ void* Thread_mandelbrot(void* arg){
 			}
 		}
 	}
-*/	if(DEBUG_MODE) printf("%llu work load in thread %d\n", Load_count, id);
+*/
+	if(DEBUG_MODE) std::cout << Load_count[id] << " work load in thread" << id << std::endl;
 //	if(DEBUG_MODE) printf("%llu pixels in cpu %d\n", pixel_count, id);
 	pthread_exit(NULL);
 }
-
+/*
 void master_mandelbrot(){
-	unsigned long long master_Load_count = 0;
 	unsigned long long master_pixel_count = 0;
 //	if(mode == R_M){
 		for (int j = 0; j < height; j+=SIZE) {
@@ -163,13 +170,13 @@ void master_mandelbrot(){
 					x = temp;
 					length_squared = x * x + y * y;
 					++repeats;
-					++master_Load_count;
+					master_Load_count[0];
 				}
 				image[j * width + i] = repeats;
 			}
 		}
 //	}
-/*	else{
+	else{
 		for (int i = 0; i < width; i+=num_cpu) {
 			double x0 = i * ((right - left) / width) + left;
 			for (int j = 0; j < height; ++j) {
@@ -192,16 +199,17 @@ void master_mandelbrot(){
 			}
 		}
 	}
-*/	if(DEBUG_MODE) printf("%llu work load in master\n", master_Load_count);
+	if(DEBUG_MODE) printf("%llu work load in master\n", master_Load_count);
 //	if(DEBUG_MODE) printf("%llu pixels in master\n", master_pixel_count);
 }
-
+*/
 int main(int argc, char** argv) {
 	/* detect how many CPUs are available */
 	cpu_set_t cpu_set;
 	sched_getaffinity(0, sizeof(cpu_set), &cpu_set);
 	num_cpu = CPU_COUNT(&cpu_set);
-	if(DEBUG_MODE) printf("%d cpus available\n", CPU_COUNT(&cpu_set));
+	if(DEBUG_MODE) std::cout << num_cpu << "cpus available" << std::endl;
+	if(IS_TIMING) clock_gettime(CLOCK_MONOTONIC, &begin);
 
 	/* argument parsing */
 	assert(argc == 9);
@@ -218,6 +226,10 @@ int main(int argc, char** argv) {
 
 	/* allocate memory for image */
 	image = (int*)malloc(width * height * sizeof(int));
+	Load_count = (unsigned long long*)malloc(num_cpu * sizeof(unsigned long long));
+	for(int i = 0;i<SIZE;i++){
+		Load_count[i] = 0;
+	}
 	assert(image);
 
 	/* mandelbrot set */
@@ -255,12 +267,29 @@ int main(int argc, char** argv) {
 	}
 
 //	master_mandelbrot();
+	unsigned long long total_Load = 0;
 
 	for(int i =0;i<SIZE;i++){
 		pthread_join(threads[i], NULL);
+		total_Load+=Load_count[i];
+	}
+
+	if(SHOW_LOAD) std::cout << "total_Load: " << total_Load << std::endl;
+
+	if(SHOW_LOAD){
+	for(int i =0;i<SIZE;i++){
+		std::cout << "Thread " << i;
+		std::cout << "runs " << std::fixed << std::setw(2) << std::setprecision(2) << (double(Load_count[i])/double(total_Load))*100 << "% Work Loads" << std::endl;
+	}
 	}
 
 	/* draw and cleanup */
 	write_png(filename, iters, width, height, image);
 	free(image);
+	if(IS_TIMING){
+		clock_gettime(CLOCK_MONOTONIC, &end);
+		elapsed = end.tv_sec - begin.tv_sec;
+		elapsed += (end.tv_nsec - begin.tv_nsec) / 1000000000.0;
+		std::cout << "Time used: " << elapsed << std::endl;
+	}
 }
